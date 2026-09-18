@@ -1,0 +1,249 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  STAFF
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum CouponType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+enum StockMovementType {
+  RESTOCK
+  SALE
+  ADJUSTMENT
+  RETURN
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  role          Role      @default(CUSTOMER)
+  isActive      Boolean   @default(true)
+  addresses     Address[]
+  orders        Order[]
+  cart          Cart?
+  sessions      Session[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("users")
+}
+
+// One row per logged-in device/browser. Replaces the old single
+// `hashedRefreshToken` column on User, which meant logging in anywhere
+// new silently logged every other device out. The refresh token is
+// rotated (hash replaced) in place on each /auth/refresh call rather than
+// creating a new row, so a session's id — embedded in the JWT `sid` claim
+// — stays stable for its whole lifetime. Revocation is soft (revokedAt),
+// matching this schema's existing soft-delete convention, so a device's
+// login history isn't destroyed just because it logged out.
+model Session {
+  id                 String    @id @default(uuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hashedRefreshToken String
+  userAgent          String?
+  ipAddress          String?
+  createdAt          DateTime  @default(now())
+  lastUsedAt         DateTime  @updatedAt
+  expiresAt          DateTime
+  revokedAt          DateTime?
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Address {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  line1      String
+  line2      String?
+  city       String
+  state      String?
+  postalCode String
+  country    String
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@map("addresses")
+}
+
+model Category {
+  id        String     @id @default(uuid())
+  name      String
+  slug      String     @unique
+  parentId  String?
+  parent    Category?  @relation("CategoryToCategory", fields: [parentId], references: [id])
+  children  Category[] @relation("CategoryToCategory")
+  products  Product[]
+  createdAt DateTime   @default(now())
+
+  @@map("categories")
+}
+
+model Product {
+  id          String      @id @default(uuid())
+  name        String
+  slug        String      @unique
+  description String
+  price       Decimal     @db.Decimal(10, 2)
+  images      String[]
+  isActive    Boolean     @default(true)
+  categoryId  String
+  category    Category    @relation(fields: [categoryId], references: [id])
+  inventory   Inventory?
+  orderItems  OrderItem[]
+  cartItems   CartItem[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([categoryId])
+  @@map("products")
+}
+
+model Inventory {
+  id           String          @id @default(uuid())
+  productId    String          @unique
+  product      Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity     Int             @default(0)
+  reserved     Int             @default(0)
+  reorderLevel Int             @default(5)
+  movements    StockMovement[]
+  updatedAt    DateTime        @updatedAt
+
+  @@map("inventory")
+}
+
+model StockMovement {
+  id          String            @id @default(uuid())
+  inventoryId String
+  inventory   Inventory         @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  type        StockMovementType
+  quantity    Int
+  reason      String?
+  createdAt   DateTime          @default(now())
+
+  @@map("stock_movements")
+}
+
+model Cart {
+  id        String     @id @default(uuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     CartItem[]
+  updatedAt DateTime   @updatedAt
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String  @id @default(uuid())
+  cartId    String
+  cart      Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+
+  @@unique([cartId, productId])
+  @@map("cart_items")
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+  status          OrderStatus @default(PENDING)
+  items           OrderItem[]
+  subtotal        Decimal     @db.Decimal(10, 2)
+  discountAmount  Decimal     @default(0) @db.Decimal(10, 2)
+  totalAmount     Decimal     @db.Decimal(10, 2)
+  couponId        String?
+  coupon          Coupon?     @relation(fields: [couponId], references: [id])
+  shippingLine1   String
+  shippingCity    String
+  shippingState   String?
+  shippingPostal  String
+  shippingCountry String
+  payment         Payment?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([userId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2)
+
+  @@map("order_items")
+}
+
+model Coupon {
+  id                String     @id @default(uuid())
+  code              String     @unique
+  type              CouponType
+  value             Decimal    @db.Decimal(10, 2)
+  minOrderAmount    Decimal?   @db.Decimal(10, 2)
+  maxDiscountAmount Decimal?   @db.Decimal(10, 2)
+  usageLimit        Int?
+  usedCount         Int        @default(0)
+  validFrom         DateTime   @default(now())
+  validUntil        DateTime?
+  isActive          Boolean    @default(true)
+  orders            Order[]
+  createdAt         DateTime   @default(now())
+
+  @@map("coupons")
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  orderId     String        @unique
+  order       Order         @relation(fields: [orderId], references: [id])
+  provider    String        @default("stripe")
+  providerRef String?
+  amount      Decimal       @db.Decimal(10, 2)
+  status      PaymentStatus @default(PENDING)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@map("payments")
+}
