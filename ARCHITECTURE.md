@@ -1,169 +1,75 @@
-# معماری (Architecture)
+# Architecture
 
-این سند تصمیم‌های فنی پشت این پروژه رو توضیح می‌ده — چرا هر بخش این‌جوری طراحی شده، نه فقط چیه.
+## Overview
 
-## نمای کلی سیستم
-
-```
-┌─────────────┐        HTTPS/REST        ┌──────────────────┐        SQL        ┌────────────┐
-│  Frontend    │ ───────────────────────▶ │   NestJS API      │ ────────────────▶ │ PostgreSQL │
-│  (Next.js)   │ ◀─────────────────────── │   (Backend)        │ ◀──────────────── │            │
-└─────────────┘         JSON              └──────────────────┘                    └────────────┘
-                                                    │
-                                                    │ Webhook (payment_intent.succeeded)
-                                                    ▼
-                                            ┌──────────────┐
-                                            │    Stripe     │
-                                            └──────────────┘
-```
-
-Backend یه REST API مستقل هست (نه server-side monolith با Frontend). این تصمیم عمدیه: Next.js از طریق HTTP باهاش صحبت می‌کنه، دقیقاً مثل هر client دیگه‌ای (موبایل، پنل ادمین جدا، و غیره). این جدایی باعث می‌شه بعداً بشه یه اپ موبایل یا پنل ادمین مستقل هم بدون تغییر Backend اضافه کرد.
-
-## چرا این تکنولوژی‌ها
-
-- **NestJS** به‌جای Express خام: چون یه پروژه به این اندازه (۱۲ ماژول) بدون یه ساختار اجباری (Module/Controller/Service + Dependency Injection) خیلی زود به کد نامنظم تبدیل می‌شه.
-- **Prisma** به‌جای TypeORM: type-safety بهتر، migration workflow واضح‌تر، و query builder که خطاهای runtime رو به compile-time منتقل می‌کنه.
-- **PostgreSQL**: به خاطر پشتیبانی native از array (فیلد `images`)، transaction قوی (لازم برای منطق سفارش/موجودی)، و `ILIKE` برای جستجوی case-insensitive بدون extension اضافه.
-- **UUID به‌جای auto-increment ID**: جلوگیری از لو رفتن تعداد رکوردها (مثلاً تعداد سفارش‌ها) از طریق URL، و راحت‌تر بودن merge بین سیستم‌های توزیع‌شده در آینده.
-- **Decimal (نه Float) برای قیمت**: Float خطای رند کردن داره (مثلاً 0.1 + 0.2 !== 0.3). برای پول همیشه باید از نوع دقیق (Decimal/Numeric) استفاده کرد.
-
-## مدل داده (خلاصه‌ی روابط)
+Northfield is a two-service application: a NestJS REST API backend and a Next.js frontend, backed by PostgreSQL. The frontend never talks to the backend directly from the browser — all requests go through a same-origin proxy route, keeping auth tokens in httpOnly cookies and out of client-side JavaScript.
 
 ```
-User ──┬── Address[]
-       ├── Cart ── CartItem[] ── Product
-       └── Order[] ──┬── OrderItem[] ── Product
-                      ├── Coupon (optional)
-                      └── Payment (1:1)
-
-Category ── Product[] ── Inventory (1:1) ── StockMovement[]
+Browser
+  │
+  ▼
+Next.js (SSR/ISR pages + /api/proxy route, httpOnly cookies)
+  │
+  ▼
+NestJS API (JWT auth, business logic)
+  │
+  ▼
+PostgreSQL (via Prisma ORM)
 ```
 
-نکته‌ی مهم: `Cart` و `Order` هر دو به `Product` وصلن، ولی `OrderItem.unitPrice` مستقل از `Product.price` ذخیره می‌شه. این عمدیه — اگه قیمت محصول بعداً عوض بشه، سفارش‌های قدیمی نباید قیمت‌شون تغییر کنه. این یه اشتباه رایجه که تازه‌کارها می‌کنن (فقط به `productId` رفرنس می‌دن و قیمت لحظه‌ای رو حساب می‌کنن).
+## Backend (NestJS)
 
-## احراز هویت (Auth) — چرا access + refresh token
+Organized by feature module, each with its own controller, service, and DTOs:
 
-- **Access token** (۱۵ دقیقه، امضا با `JWT_ACCESS_SECRET`): برای هر request به API. کوتاه‌مدت عمدیه — اگه لو بره، عمر کوتاهی داره.
-- **Refresh token** (۷ روز، امضا با یه secret جدا): فقط برای گرفتن access token جدید. هر توکن یه claim اضافه به اسم `sid` داره که به یه ردیف توی جدول `Session` اشاره می‌کنه، نه یه فیلد تکی روی `User` — پس هر دستگاه/مرورگر session جدای خودش رو داره و ورود از یه دستگاه جدید، بقیه رو logout نمی‌کنه. نسخه‌ی hash‌شده‌ی refresh token روی همون ردیف `Session` ذخیره می‌شه و هر بار که refresh می‌شه این هش عوض می‌شه (rotation)، پس یه refresh token دزدیده‌شده بعد از اولین استفاده‌ی بعدیِ صاحب واقعی از کار می‌افته.
-- نقش‌ها (`Role`: CUSTOMER, STAFF, ADMIN) داخل payload توکن هست، پس `RolesGuard` بدون query اضافه به دیتابیس تصمیم می‌گیره.
-- مدیریت session: `GET /auth/sessions` (لیست دستگاه‌های فعال با user-agent/IP)، `DELETE /auth/sessions/:id` (خروج از یه دستگاه خاص)، `POST /auth/logout-all` (خروج از همه‌جا — مثلاً بعد از عوض کردن پسورد). لغو session همیشه soft هست (پر شدن `revokedAt`، نه حذف ردیف)، هم‌راستا با الگوی soft-delete بقیه‌ی مدل‌ها.
+- **auth** — registration, login, JWT access/refresh token issuance, refresh rotation with reuse detection, multi-session tracking (`sessions` table, one row per login)
+- **users** — profile and role management
+- **products** — catalog CRUD, filtering/search
+- **categories** — category CRUD
+- **cart** — cart item management
+- **orders** — order creation and status transitions
+- **coupons** — coupon validation and management
+- **inventory** — stock levels, manual adjustments, low-stock detection
+- **payments** — Stripe payment intents and webhook handling
+- **reports** — sales/revenue reporting with date-range filtering
 
-## چرخه‌ی عمر سفارش (Order Lifecycle)
+Cross-cutting concerns live in **common**: JWT auth guard, role-based access guard, a global HTTP exception filter (which also reports 5xx errors to Sentry), and a structured JSON request-logging interceptor.
 
-```
-PENDING → PAID → PROCESSING → SHIPPED → DELIVERED
-   │                                        
-   └──────────────→ CANCELLED / REFUNDED
-```
+### Auth flow
 
-نکته‌ی طراحی مهم: **الگوی رزرو موجودی (Inventory Reservation)**. وقتی سفارش از سبد خرید ساخته می‌شه، موجودی کم نمی‌شه — به‌جاش فیلد `reserved` روی `Inventory` زیاد می‌شه. موجودی واقعی (`quantity`) فقط وقتی کم می‌شه که پرداخت از طریق webhook تایید بشه (`markOrderPaid` در `PaymentsService`). این جلوی یه باگ کلاسیک فروشگاه‌های آنلاین رو می‌گیره: اگه مشتری سفارش بده ولی پرداخت نکنه (یا browser رو ببنده)، موجودی برای همیشه قفل نمی‌مونه پیش کاربر دیگه، و از طرفی موجودی هم به اشتباه فوراً کم نمی‌شه قبل از قطعی شدن پرداخت.
+1. Login/register issues a short-lived **access token** and a longer-lived **refresh token**, both JWTs.
+2. The refresh token's fingerprint (SHA-256 hash, then bcrypt) is stored per session — not the raw token — so a leaked database can't be used to forge sessions.
+3. On refresh, the old token is checked for reuse. If a token is reused (e.g. an old, already-rotated token is replayed), the entire session is revoked, not just that token — this catches token theft.
+4. Multiple simultaneous sessions are supported; logging in on a new device does not invalidate other active sessions.
 
-فرمول موجودی «واقعاً در دسترس» همیشه:
-```
-available = quantity - reserved
-```
+### Data layer
 
-## منطق تخفیف (Coupon)
+Prisma ORM against PostgreSQL 16. Migrations are tracked in `backend/prisma/migrations`. The seed script (`npm run seed`) populates demo products, an admin account, and a customer account.
 
-منطق اعتبارسنجی کوپن دوبار با کد یکسان تکرار شده: یه‌بار مستقل توی `CouponsService.validate()` (که یه endpoint عمومیه برای هر جایی که بخوای بدون ساختن سفارش، تخفیف رو محاسبه کنی)، و یه‌بار داخل `OrdersService.createFromCart()` موقع ساخت سفارش نهایی — چون خودِ عملیات ساخت سفارش باید مستقل و اتمیک (atomic) اعتبارسنجی کنه، نه به یه فراخوانی قبلی اعتماد کنه که ممکنه بین این دو، کوپن منقضی یا تمام شده باشه. ترتیب چک‌ها عمدیه: فعال بودن → منقضی نشدن → سقف استفاده → حداقل مبلغ سفارش، و در آخر محاسبه‌ی تخفیف با احترام به سقف حداکثر (`maxDiscountAmount` — مهم برای کوپن‌های درصدی، وگرنه یه سفارش خیلی بزرگ می‌تونه تخفیف نامتناسب بگیره).
+## Frontend (Next.js, App Router)
 
-نکته‌ی صادقانه: فعلاً `CheckoutForm.tsx` مستقیم کد کوپن رو همراه `POST /orders` می‌فرسته و فقط بعد از تلاش برای ساخت سفارش می‌فهمه معتبره یا نه (پیام خطا نشون می‌ده اگه نامعتبر باشه). `/coupons/validate` برای یه پیش‌نمایش زنده‌ی تخفیف (قبل از زدن دکمه‌ی نهایی) نوشته شده ولی به هیچ‌جای UI وصل نیست — یه بهبود کوچیک و اختیاریِ باقی‌مونده، نه یه باگ.
+- **`(shop)` route group** — public storefront: home, product listing/detail, cart, checkout, order history
+- **`admin` route group** — dashboard, product/inventory/order/customer/coupon/report management
+- **`/api/proxy/[...path]`** — the only route that talks to the backend. It forwards requests (including raw bytes and original `Content-Type`, so multipart file uploads aren't corrupted) and attaches the auth cookie server-side. On backend failure it returns clean JSON instead of leaking a raw HTML error page.
+- **`middleware.ts`** — route protection based on auth cookie presence/role.
+- **State**: Zustand for client-side cart state; server components handle data fetching for pages via `lib/server-api.ts`.
+- **Payments**: Stripe Elements on the checkout page, talking to the backend's payment-intent endpoint through the proxy.
 
-## پرداخت (Payment) — چرا Webhook و نه فقط پاسخ مستقیم API
+### Error handling
 
-Stripe (و هر payment gateway واقعی) پرداخت رو async پردازش می‌کنه. اگه Backend فقط به پاسخ مستقیم درخواست پرداخت اعتماد کنه، در حالت‌هایی مثل 3D Secure (تاییدیه‌ی اضافه‌ی بانک) یا قطعی شبکه‌ی مرورگر کاربر، هیچ‌وقت خبردار نمی‌شه که پرداخت واقعاً موفق شده یا نه. به همین دلیل:
+Server-side fetch helpers distinguish "the backend is unreachable" from "the query returned zero results," so the UI shows an honest error state (with auto-recovery on refresh) instead of a misleading "no results" message when the backend is down.
 
-1. `POST /payments/intent/:orderId` یه `PaymentIntent` می‌سازه و `clientSecret` برمی‌گردونه (Frontend با Stripe.js تکمیلش می‌کنه).
-2. Stripe بعد از تایید نهایی، به `POST /payments/webhook` خبر می‌ده.
-3. امضای webhook (`stripe-signature` header) با `constructEvent` تایید می‌شه — این جلوی جعل درخواست رو می‌گیره. برای همین `main.ts` با `rawBody: true` بالا میاد؛ Stripe به بدنه‌ی خام (نه JSON parse‌شده) برای verification نیاز داره.
-4. فقط بعد از این تاییدیه، سفارش `PAID` می‌شه و موجودی واقعاً کم می‌شه.
+## Monitoring
 
-## کنترل دسترسی نقش‌محور (RBAC)
+`@sentry/nestjs` is wired into the backend via `instrument.ts` (loaded before Nest bootstraps) and the global exception filter. Only 5xx errors are reported — 4xx client errors are not, to keep noise down.
 
-سه نقش: `CUSTOMER` (پیش‌فرض هر کاربر جدید)، `STAFF`، `ADMIN`. به‌جای یه سیستم دسترسی‌های دانه‌ریز (permission matrix)، از enum ساده استفاده شده — برای اندازه‌ی این پروژه کافیه و پیچیدگی اضافه نمی‌کنه. الگوی کلی: `STAFF` می‌تونه محصول/دسته‌بندی رو بسازه و ویرایش کنه (شامل تغییر قیمت)، سفارش‌ها و گزارش‌ها رو ببینه، موجودی رو تنظیم کنه — یعنی کارهای روزمره‌ی عملیاتی. `ADMIN`-only محدود به تصمیم‌های برگشت‌ناپذیرتره: حذف (deactivate) محصول یا دسته‌بندی، مدیریت کامل کوپن‌ها (ساخت/ویرایش/حذف)، و تغییر نقش کاربران (`PATCH /users/:id/role`).
+## Testing
 
-## تست
+- **Unit tests** (Jest): 101 tests across 5 suites — inventory, orders, coupons, auth, and duration utilities.
+- **End-to-end tests** (Jest + Supertest): 30 tests across 3 suites — auth flows, error handling, and role-based access control.
 
-`npm run test` (unit) و `npm run test:e2e` (e2e). وضعیت فعلی: **۱۰۱ تست unit + ۳۰ تست e2e، همه pass**. این‌ها واقعاً اجرا شدن، نه فقط نوشته شدن.
+## Security notes
 
-### تست‌های unit — منطق تجاری با Prisma موک‌شده
-
-| فایل | چی رو پوشش می‌ده |
-|---|---|
-| `auth.service.spec.ts` (۲۷) | ورود/ثبت‌نام، hash پسورد، چند-session، rotation توکن، revoke |
-| `orders.service.spec.ts` (۳۵) | تبدیل سبد به سفارش، رزرو موجودی، اعمال کوپن، کنترل دسترسی |
-| `coupons.service.spec.ts` (۱۶) | محاسبه‌ی تخفیف، سقف، انقضا، سقف دفعات استفاده |
-| `inventory.service.spec.ts` (۱۲) | تعدیل موجودی، جلوگیری از منفی شدن، لاگ حسابرسی |
-| `duration.spec.ts` (۱۱) | پارس کردن `15m`/`7d` برای محاسبه‌ی انقضای session |
-
-یه `createMockPrisma()` مشترک توی `src/test-utils/` هست که همه‌ی delegateها رو `jest.fn()` می‌کنه. `$transaction` توی این mock، callback رو واقعاً اجرا می‌کنه — یعنی *منطق داخل* تراکنش تست می‌شه. ولی صادقانه: این mock نمی‌تونه rollback کنه، پس خودِ تضمین اتمیک بودن تست نشده — اون کار دیتابیسه.
-
-### تست‌های e2e — لایه‌ی HTTP واقعی
-
-اپلیکیشن واقعی بوت می‌شه (controllerها، guardها، validation pipeها، exception filter، routing) و فقط `PrismaService` با mock جایگزین می‌شه.
-
-- `auth.e2e-spec.ts` (۱۴): اعتبارسنجی ورودی، رد توکن جعلی/منقضی، endpointهای session
-- `rbac.e2e-spec.ts` (۱۱): مرز STAFF/ADMIN — هر تست، نسخه‌ی اجراییِ یه خط از مستنداته
-- `errors.e2e-spec.ts` (۵): شکل پاسخ خطا، JSON بودن (نه HTML)، نشت نکردن پیام داخلی، سطح لاگ
-
-**چرا `rbac.e2e-spec.ts` وجود داره**: مستندات همین پروژه یه بار درباره‌ی مجوزهای STAFF اشتباه بود. مستندات بی‌صدا واگرا می‌شن؛ تست شکست‌خورده نه.
-
-**چیزی که این تست‌ها پوشش نمی‌دن**: هر چیزی که کار دیتابیسه — rollback تراکنش، unique constraint، cascade delete، و SQL خامِ `lowStock()`. برای اون‌ها Postgres واقعی لازمه. ساختار فعلی (یه helper به اسم `createTestApp`، mock دقیقاً سر مرز `PrismaService`) عمداً طوری چیده شده که جایگزین کردنش با یه PrismaService واقعی یه تغییر یک‌خطی باشه، نه بازنویسی.
-
-### یه نکته‌ی ساختاری
-
-تنظیمات global (helmet، CORS، prefix، ValidationPipe، filter، interceptor) از `main.ts` به `src/app.config.ts` منتقل شدن. دلیلش اینه که تست‌های e2e دقیقاً همون تابع رو صدا می‌زنن — اگه کپی می‌شد، دو نسخه به‌مرور واگرا می‌شدن و یه قانون اعتبارسنجی جدید ممکن بود *به‌نظر* تست‌شده بیاد درحالی‌که نیست.
-
-## محدودیت‌های فعلی و قدم بعدی برای Production
-
-صادقانه: این‌ها رو عمداً برای کنترل حجم پروژه ساده نگه داشتم. قبل از استفاده‌ی واقعی تجاری لازمن:
-
-- ~~**تست خودکار** (unit/e2e) نوشته نشده~~ — ✅ رفع شد و **واقعاً اجرا شد**: ۱۰۱ تست unit + ۳۰ تست e2e، همه pass. جزئیات توی بخش «تست» پایین‌تر.
-- ~~**Rate limiting** فقط global هست~~ — ✅ رفع شد: `login` و `register` حالا محدودیت سخت‌گیرانه‌ی جداگانه (۵ درخواست در دقیقه per-IP) دارن، در کنار محدودیت کلی ۱۰۰ تایی.
-- ~~**Refresh token فقط یکی در لحظه ذخیره می‌شه**~~ — ✅ رفع شد: حالا هر login یه ردیف مستقل توی جدول `Session` می‌سازه؛ جزئیات کامل توی بخش Auth بالاتر.
-- **کلیدهای Stripe** توی `.env.example` فیک هستن. باید با کلیدهای Test واقعی از داشبورد Stripe خودت جایگزین بشن تا پرداخت واقعاً تست بشه.
-- ~~**مدیریت تصویر محصول**: فقط آرایه‌ای از URL~~ — ✅ رفع شد: آپلود واقعی فایل با `POST /uploads/product-image` (اعتبارسنجی نوع فایل و سقف ۵ مگابایت)، به‌همراه UI آپلود در فرم محصول پنل ادمین.
-- ~~**لاگ‌گیری structured / اتصال به monitoring**~~ — ✅ رفع شد: هر درخواست به‌صورت یک خط JSON ساختاریافته لاگ می‌شه، و حالا با `@sentry/nestjs` به Sentry هم وصله — فقط خطاهای واقعی/غیرمنتظره (۵xx) گزارش می‌شن، نه ۴۰۴ یا خطای اعتبارسنجی که بخشی از جریان عادی برنامه‌ان. با `SENTRY_DSN` خالی توی `.env` (پیش‌فرض)، این بخش کاملاً غیرفعاله و هیچ تاثیری روی dev محلی نداره. **صادقانه**: فقط سمت backend اضافه شده؛ frontend (Next.js) فعلاً به Sentry وصل نیست.
-- ~~**کامپایل TypeScript backend در sandbox من قابل‌تأیید نبود**~~ — ✅ رفع شد: با یه shim دستی برای Prisma Client (توضیح پایین‌تر) تونستم `tsc --noEmit` رو روی کل backend اجرا کنم. صفر خطا. توی همین مرحله یه خطای کامپایل واقعی پیدا شد که `npm run build` رو روی سیستم تو می‌شکست — توضیحش توی بخش باگ‌ها.
-
-### محدودیت Prisma و راهی که دورش زدم
-
-Prisma Client (چیزی که کلاس `PrismaClient` و enumهایی مثل `Role`, `OrderStatus` رو تولید می‌کنه) نیاز داره یه فایل باینری به اسم query engine رو از `binaries.prisma.sh` دانلود کنه. توی sandboxی که من درونش کار می‌کنم، دسترسی شبکه به یه لیست محدود از دامنه‌ها (npm، PyPI، GitHub و چندتای دیگه) قفل شده و `binaries.prisma.sh` جزوشون نیست — این یه تصمیم امنیتی محیط منه (allowlist دامنه)، نه یه باگ یا مشکل موقت.
-
-چندین راه رو امتحان کردم: نادیده گرفتن checksum، فعال‌سازی preview feature به اسم driver adapters، تنظیم `engineType = "wasm"`، و حتی build کردن prisma-engines از سورس Rust. هیچ‌کدوم جواب نداد.
-
-**راهی که آخرش جواب داد**: به‌جای تلاش برای تولید Prisma Client واقعی، یه *shim* دستی نوشتم — یه فایل type declaration به‌علاوه یه پیاده‌سازی JS ساده که دقیقاً همون چیزهایی رو export می‌کنه که کد ازش استفاده می‌کنه (enumها، کلاس `PrismaClient` با delegateها، namespace `Prisma`). این shim فقط داخل `node_modules/.prisma/client` خودِ sandbox منه و **بخشی از پروژه‌ی تو نیست و توی zip نیومده** — روی سیستم تو `npx prisma generate` نسخه‌ی واقعی رو تولید می‌کنه و جاش رو می‌گیره.
-
-نتیجه‌ی عملی: تونستم `tsc --noEmit` و کل تست‌ها رو واقعاً اجرا کنم. یه نکته‌ی مهم برای صداقت: چون shim تایپ delegateها رو `any` گذاشته، تایپ‌چک من *اسم فیلدهای Prisma رو اعتبارسنجی نمی‌کنه* — مثلاً اگه جایی `data: { quantitiy: 5 }` نوشته باشم (غلط املایی)، tsc من نمی‌گیرتش ولی tsc روی سیستم تو می‌گیره. پس `npx prisma generate && npm run build` روی سیستم خودت هنوز یه مرحله‌ی تأیید واقعیه، فقط دیگه تنها خط دفاع نیست.
-
-## Frontend — معماری
-
-Next.js با App Router، مصرف‌کننده‌ی همون API. یه تصمیم ساختاری مهم: تمام مسیرهای فروشگاه زیر یه route group به اسم `(shop)` هستن که Header/Footer رو اضافه می‌کنه، درحالی‌که `/admin` بیرون از این گروهه و layout مستقل خودش (sidebar تمام‌صفحه) رو داره. بدون این جداسازی، `/admin` هم داخل container باریکِ فروشگاه گیر می‌افتاد.
-
-### چرا صفحات محصول ISR هستن ولی لیست محصولات نه
-
-صفحه‌ی تک‌محصول (`/products/[slug]`) با `revalidate = 3600` کار می‌کنه: اولین بازدید رندر و کش می‌شه، بازدیدهای بعدی از کش میان تا یه ساعت بگذره. این برای صفحه‌ای که محتواش کم تغییر می‌کنه (توضیحات، قیمت) ولی نباید همیشه build-time باشه (چون محصول جدید توسط ادمین اضافه می‌شه) منطقیه.
-
-لیست محصولات (`/products`) برعکس، `force-dynamic` هست — چون هر ترکیب فیلتر/جستجو عملاً یه صفحه‌ی متفاوته؛ کش کردن یکی معنی نداره و می‌تونه نتیجه‌ی فیلتر اشتباه رو به کاربر بعدی نشون بده.
-
-### چرا هیچ توکنی توی localStorage نیست
-
-`accessToken` و `refreshToken` کوکی `httpOnly` هستن، نه چیزی که با جاوااسکریپت قابل خوندن باشه. این یعنی حتی اگه یه حمله‌ی XSS (تزریق اسکریپت مخرب) جایی توی اپ اتفاق بیفته، مهاجم نمی‌تونه توکن‌ها رو بدزده. هزینه‌ش اینه که کامپوننت‌های کلاینت نمی‌تونن مستقیم به backend فچ بزنن (چون توکن رو نمی‌بینن) — برای همین یه مسیر `/api/proxy/[...path]` ساخته شده که خودش کوکی رو می‌خونه، هدر `Authorization` واقعی می‌سازه، و اگه لازم بود refresh رو انجام می‌ده. کلاینت همیشه فقط با همین مسیرِ same-origin (هم‌مبدأ) صحبت می‌کنه، نه با backend مستقیم.
-
-### چهار باگ واقعی که موقع ساخت پیدا شدن
-
-- **Route handler با export غیرمجاز**: تابع کمکی `setAuthCookies` اول داخل خودِ `route.ts` تعریف و export شده بود. Next.js فقط اجازه‌ی export توابع HTTP method (`GET`, `POST`, ...) رو از این فایل‌ها می‌ده؛ `next build` با خطای صریح متوقفش کرد. راه‌حل: انتقال تابع به `lib/cookies.ts`.
-- **خطای خام HTML به‌جای JSON تمیز**: وقتی backend در دسترس نبود، `fetch()` داخل مسیر proxy reject می‌کرد بدون try/catch، و Next.js یه صفحه‌ی خطای HTML خام برمی‌گردوند. سمت کلاینت، `res.json()` روی اون HTML می‌شکست و خطای گیج‌کننده‌ی دومی تولید می‌کرد. با curl واقعی (بدون بک‌اند روشن) پیدا شد، نه با خوندن کد. راه‌حل: پیچیدن `fetch` در try/catch و برگردوندن یه `502` با بدنه‌ی JSON تمیز.
-- **کوکی refreshToken بعد از رفرش خاموش، هیچ‌وقت آپدیت نمی‌شد**: `auth.refresh()` همیشه یه refresh token جدید صادر می‌کنه (rotation)، ولی مسیر proxy فقط کوکی `accessToken` رو بعد از رفرش خاموش ست می‌کرد، نه `refreshToken` رو. نتیجه: کوکی مرورگر همون توکن قدیمی می‌موند که دیگه با هش ذخیره‌شده‌ی جدید (روی ردیف `Session`) مطابقت نداشت — پس دومین رفرش خاموش همیشه شکست می‌خورد و کاربر مجبور به login دوباره می‌شد. این باگ قبلاً هم وجود داشت (چون rotation از اول همین‌جوری کار می‌کرد)، ولی موقع اضافه کردن Session table بهش برخوردم چون دقیقاً همین مسیر رو دست می‌زدم. راه‌حل: `tryRefresh` هر دو توکن رو برمی‌گردونه و هر دو کوکی آپدیت می‌شن.
-- **`payments.controller.ts` اصلاً کامپایل نمی‌شد**: `req.rawBody` توی NestJS از نوع `Buffer | undefined` هست (چون فقط وقتی وجود داره که درخواست واقعاً بدنه داشته باشه)، ولی `handleWebhook` پارامتر `Buffer` می‌خواست. با `strictNullChecks: true` این یه خطای کامپایله — یعنی `npm run build` روی سیستم تو می‌شکست. این باگ تا الان پیدا نشده بود چون `prisma generate` توی sandbox بلاک بود و هیچ‌وقت `tsc` کامل اجرا نشده بود؛ به‌محض اینکه با shim تونستم تایپ‌چک کنم، اولین چیزی بود که بیرون اومد. راه‌حل: یه بررسی صریح که نبودِ بدنه رو به `400` تمیز تبدیل می‌کنه، به‌جای اینکه `undefined` رو به SDK استرایپ پاس بده و یه خطای داخلی گیج‌کننده بگیره.
-- **همه‌ی خطاهای ۴xx با سطح ERROR و stack trace کامل لاگ می‌شدن**: یه ۴۰۳ یا ۴۰۱ یعنی API داره درست کار می‌کنه — نه اینکه باگ داره. این رفتار باعث می‌شد ۵xxهای واقعی بین انبوه نویز گم بشن، و دقیقاً همون Sentryی رو که تازه وصل کرده بودم بی‌فایده می‌کرد. موقع اجرای تست‌های e2e پیدا شد (خروجی پر از stack trace برای تست‌هایی که *انتظار* داشتم ۴۰۳ بدن). راه‌حل: ۵xx می‌مونه error با stack، ۴xx می‌شه یه خط warn.
-
-## فاز بعدی
-
-تست خودکار، پشتیبانی چند-session، و اتصال به Sentry — سه موردی که بالاتر به‌عنوان محدودیت علامت خورده بودن — حالا اضافه شدن و ۱۳۱ تست pass می‌شن. قدم‌های باقی‌مونده:
-
-۱. **`npx prisma generate && npm run build` روی سیستم خودت.** تایپ‌چک من با shim انجام شد، که اسم فیلدهای Prisma رو اعتبارسنجی نمی‌کنه (توضیح کامل توی بخش محدودیت Prisma). این یه بار اجرا لازمه.
-۲. **`npm run migrate dev` برای ساخت جدول `Session`.** schema عوض شده، پس یه migration جدید لازمه. فیلد `hashedRefreshToken` از `User` حذف شده.
-۳. **کلیدهای Stripe تستی واقعی** از داشبورد خودت.
-
-چیزهایی که جا افتاده نیستن ولی اگه لازم شد قدم بعدی‌ان: اجرای همین تست‌های e2e روی یه Postgres واقعی (برای پوشش rollback و constraintها)، UI مدیریت دستگاه‌ها توی `/account`، و اتصال Sentry به frontend.
+- Refresh tokens are never stored in plaintext or in a directly-hashable form (see Auth flow above).
+- Rate limiting: 5 requests/minute per IP on login/register endpoints.
+- Auth tokens live in httpOnly cookies, never exposed to client-side JavaScript.
+- Real secrets (`backend/.env`, `frontend/.env.local`) are gitignored; only `.env.example` files are committed.
