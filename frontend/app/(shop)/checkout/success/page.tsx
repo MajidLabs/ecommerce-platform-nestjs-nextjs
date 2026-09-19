@@ -12,7 +12,7 @@ export default function CheckoutSuccessPage({
       <CheckCircle2 className="mx-auto h-12 w-12 text-signal" />
       <h1 className="mt-5 font-display text-2xl">Order placed</h1>
       <p className="mt-2 text-muted">
-        Thanks — we've received your order
+        Thanks — we&apos;ve received your order
         {searchParams.orderId && (
           <>
             {' '}

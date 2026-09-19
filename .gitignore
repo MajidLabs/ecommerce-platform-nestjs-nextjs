@@ -3,7 +3,7 @@ backend/.env
 frontend/.env.local
 backend/dist/
 frontend/.next/
-uploads/
+/uploads/
 *.log
 *.zip
 *.tsbuildinfo
