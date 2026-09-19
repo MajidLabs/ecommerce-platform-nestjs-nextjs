@@ -1,92 +1,151 @@
-# Northfield — Full-Stack E-Commerce Platform
+# E-commerce Platform
 
-A production-quality e-commerce platform built from scratch with a NestJS backend and a Next.js frontend, including a complete customer storefront and admin panel.
+A full-featured e-commerce reference implementation with a real, production-style backend. See [ARCHITECTURE.md](./ARCHITECTURE.md) for architecture and design decisions.
 
-## Features
+## Project Status
 
-- **Storefront**: product catalog with filtering, cart, checkout with Stripe payments, coupon codes, order history
-- **Admin panel**: dashboard with KPIs and revenue chart, product management, inventory tracking with low-stock warnings, order status management, customer role management, coupon management, sales reports with date-range filtering
-- **Auth**: JWT-based authentication with access + refresh tokens, refresh token rotation with reuse detection, multi-session support
-- **Payments**: Stripe integration with webhook handling
-- **File uploads**: product image uploads with MIME-type and size validation
-- **Monitoring**: Sentry error tracking (5xx errors only)
-- **Testing**: 101 unit tests across 5 suites, 30 end-to-end tests across 3 suites (auth, error handling, role-based access control)
-- **Resilience**: graceful degradation and auto-recovery when the backend is temporarily unavailable
+| Component | Status |
+|---|---|
+| Backend (NestJS + PostgreSQL) | ✅ Complete. `tsc --noEmit` passes with zero errors. 101 unit tests + 30 e2e tests, all passing |
+| Frontend (Next.js) | ✅ Complete. `tsc` and `next build` pass with zero errors; graceful-degradation behavior verified against a stopped backend |
+| Admin Panel | ✅ Complete, part of the frontend (`/admin/*`) |
+| Automated tests | ✅ 131 tests. Details in [ARCHITECTURE.md](./ARCHITECTURE.md#testing) |
+| Multi-session support | ✅ Dedicated `Session` table, refresh token rotation, per-device management |
+| Monitoring | ✅ Sentry (backend), disabled by default when `SENTRY_DSN` is unset |
 
-## Tech Stack
+## Tech Stack — Backend
 
-**Backend**
-- NestJS
-- Prisma ORM + PostgreSQL 16
-- JWT authentication (access + refresh tokens)
-- Stripe webhooks
-- Multer for file uploads
-- Sentry for error monitoring
+- **NestJS 10** — server-side framework
+- **PostgreSQL 16** — database
+- **Prisma 5** — ORM
+- **Passport + JWT** — authentication (15-minute access token, 7-day refresh token)
+- **Stripe** — payments (test mode)
+- **class-validator** — input validation
+- **Swagger** — auto-generated API documentation
 
-**Frontend**
-- Next.js (App Router, SSR/ISR)
-- Zustand for state management
-- Stripe Elements
-- Tailwind CSS
-- Same-origin `/api/proxy` route with httpOnly cookies for secure token handling
+## Prerequisites
 
-**Infrastructure**
-- Docker Compose (PostgreSQL container)
+- Node.js 20+
+- PostgreSQL 16 (or Docker)
 
-## Getting Started
-
-### Prerequisites
-- Node.js ≥ 20
-- Docker (for PostgreSQL) or a local Postgres 16 instance
-
-### Setup
+## Setup
 
 ```bash
-# 1. Start the database
-docker compose up -d
-
-# 2. Backend
 cd backend
 npm install
-cp .env.example .env
+cp .env.example .env   # fill in real values
+
+# Database (or use docker-compose.yml at the project root)
+docker compose -f ../docker-compose.yml up -d
+
 npx prisma generate
 npx prisma migrate dev --name init
 npm run seed
-npm run start:dev
-# → Server running on http://localhost:4000/api/v1
 
-# 3. Frontend (in a new terminal)
+npm run start:dev
+```
+
+The API runs at `http://localhost:4000/api/v1`. Swagger docs are available at `http://localhost:4000/api/docs`.
+
+### Running Tests
+
+```bash
+npm run test       # 101 unit tests
+npm run test:e2e   # 30 e2e tests
+npm run test:cov   # with coverage report
+```
+
+Tests require no running database or server — the Prisma layer is mocked. Test coverage boundaries (transaction rollback, database constraints) are documented in [ARCHITECTURE.md](./ARCHITECTURE.md#testing).
+
+## Seeded Accounts
+
+| Role | Email | Password |
+|---|---|---|
+| Admin | admin@example.com | Admin@12345 |
+| Customer | customer@example.com | Customer@12345 |
+
+Sample coupon code: `WELCOME10` (10% off, $50 minimum order)
+
+## Testing Payment Webhooks (Stripe)
+
+```bash
+stripe listen --forward-to localhost:4000/api/v1/payments/webhook
+```
+
+Set the printed `whsec_...` value as `STRIPE_WEBHOOK_SECRET`.
+
+## Project Structure
+
+```
+backend/
+├── prisma/
+│   ├── schema.prisma      # database schema
+│   └── seed.ts
+└── src/
+    ├── auth/               # registration, login, JWT
+    ├── users/               # profile and role management
+    ├── categories/
+    ├── products/            # search and filtering
+    ├── inventory/            # stock and adjustment history
+    ├── cart/
+    ├── orders/               # cart-to-order conversion, coupon application, stock reservation
+    ├── coupons/
+    ├── payments/              # Stripe PaymentIntent + webhook handling
+    ├── reports/                 # sales reports for the admin panel
+    ├── common/                   # guards, decorators, exception filters
+    └── prisma/                    # PrismaService
+```
+
+## Scripts
+
+| Command | Description |
+|---|---|
+| `npm run start:dev` | run in watch mode |
+| `npm run build` | production build |
+| `npm run prisma:migrate` | create a new migration |
+| `npm run seed` | seed the database with sample data |
+| `npm run test` | unit tests |
+| `npm run test:e2e` | end-to-end tests |
+| `npm run test:cov` | tests with coverage report |
+
+## Tech Stack — Frontend
+
+- **Next.js 14 (App Router)** — SSR for auth-gated pages, ISR for product pages, `force-dynamic` for the filtered product listing
+- **Zustand** — used only for the cart badge counter; all other state is server-driven
+- **jose** — JWT signature verification in middleware (Edge runtime) and Server Components
+- **Stripe Elements** — payment form
+- **Tailwind CSS** — styling, no additional component library
+
+## Frontend Setup
+
+```bash
 cd frontend
 npm install
-cp .env.local.example .env.local
-# Make sure JWT_ACCESS_SECRET in .env.local matches the backend's .env
-npm run build
+cp .env.local.example .env.local   # JWT_ACCESS_SECRET must match the backend exactly
+
 npm run dev
 ```
 
-### Seeded accounts
+Runs at `http://localhost:3000`. The backend must also be running on port 4000 (see above) for full functionality.
 
-| Role     | Email                  | Password       |
-|----------|-------------------------|----------------|
-| Admin    | admin@example.com       | Admin@12345    |
-| Customer | customer@example.com    | Customer@12345 |
+### Frontend Auth Architecture
 
-### Test payment card (Stripe test mode)
+`accessToken` and `refreshToken` are stored as `httpOnly` cookies, inaccessible to browser-side JavaScript — a mitigation against XSS-based token theft. Client-side code never calls the backend directly; all requests are routed through `/api/proxy/*`, which reads the cookie, attaches the `Authorization` header server-side, and performs a silent refresh when the access token has expired.
 
-`4242 4242 4242 4242` — any future expiry date, any CVC.
+`middleware.ts` protects `/cart`, `/checkout`, `/account`, and `/admin` at the edge, verifying the JWT signature before the page renders.
 
-## Testing
+## Operational Features
 
-```bash
-cd backend
-npm run test        # unit tests
-npm run test:e2e    # end-to-end tests
-```
+- **Product image uploads**: the admin product form supports file uploads. Files are stored in `backend/uploads/products/` and served from `/uploads/...`. JPEG/PNG/WebP only, 5 MB limit. The upload directory is gitignored, so uploaded images are never committed.
+- **Two-tier rate limiting**: 100 requests/minute globally, with a stricter 5 requests/minute per IP on `login` and `register` to slow brute-force attempts.
+- **Structured logging**: every request is logged as a single JSON line (method, path, status, duration, userId, IP), suitable for ingestion by tools like Datadog or CloudWatch. Log levels are severity-aware: 5xx errors log at `error` with a full stack trace, while 4xx errors (expected outcomes like 401/404) log at `warn` to keep signal-to-noise high.
+- **Sentry monitoring**: unexpected errors are reported to Sentry when `SENTRY_DSN` is set; leaving it empty (the default) disables it entirely with no code changes required. Routine 4xx errors are not reported.
+- **Concurrent multi-device sessions**: each login creates an independent session, so signing in on one device does not invalidate others. Users can list active sessions (`GET /auth/sessions`), revoke one (`DELETE /auth/sessions/:id`), or log out of all devices (`POST /auth/logout-all`). Refresh tokens rotate on every use; reuse of an old token invalidates the entire session.
 
-## Architecture
+## Before Production Use
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for a detailed breakdown of the system design.
+See [ARCHITECTURE.md](./ARCHITECTURE.md#current-limitations-and-next-steps-for-production) for full details. Three remaining steps:
 
-## Author
-
-Built by [MajidLabs](https://github.com/MajidLabs).
+1. **Run `npx prisma generate && npm run build`** locally. This generates a fully validated Prisma Client and confirms a clean production build (see [notes on Prisma Client generation](./ARCHITECTURE.md#note-on-prisma-client-generation-in-restricted-network-environments) if this fails in a restricted-network environment).
+2. **Run `npx prisma migrate dev`** to create the `Session` table — the schema changed and `hashedRefreshToken` was removed from `User`.
+3. **Replace the Stripe keys** with real test keys from your own Stripe account.
