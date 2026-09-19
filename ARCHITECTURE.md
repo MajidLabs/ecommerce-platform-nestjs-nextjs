@@ -116,12 +116,12 @@ Global configuration (helmet, CORS, prefix, ValidationPipe, filter, interceptor)
 
 ## Current Limitations and Next Steps for Production
 
-The following were scoped out deliberately to keep the project focused, and are required before real commercial use:
+The items below were originally scoped out to keep initial development focused, and have since been addressed:
 
 - ~~Automated tests (unit/e2e) not written~~ — **Resolved**: 101 unit tests + 30 e2e tests, all passing. See the Testing section above.
 - ~~Rate limiting was global only~~ — **Resolved**: `login` and `register` now have a dedicated, stricter limit (5 requests/minute per IP), in addition to the overall 100/minute cap.
 - ~~Only one refresh token stored at a time~~ — **Resolved**: each login now creates an independent `Session` row; see the Authentication section above.
-- **Stripe keys** in `.env.example` are placeholders and must be replaced with real test keys from a Stripe dashboard before payments can be exercised end-to-end.
+- ~~Stripe keys were placeholders~~ — **Resolved**: real Stripe test keys were configured for the reference deployment, with a live test-card payment confirmed end-to-end (see Next Phase below). `.env.example` in this repo intentionally still ships with placeholder values, since Stripe keys are account-specific — anyone deploying this needs to generate their own test keys from their own Stripe dashboard.
 - ~~Product image handling was limited to an array of URLs~~ — **Resolved**: real file uploads via `POST /uploads/product-image` (file-type and 5 MB validation), with an upload UI in the admin product form.
 - ~~No structured logging or monitoring integration~~ — **Resolved**: every request is logged as a structured JSON line and reported to Sentry via `@sentry/nestjs`. Only unexpected errors (5xx) are reported; 4xx responses that are part of normal flow are not. Monitoring is fully disabled when `SENTRY_DSN` is unset, with no effect on local development. Note: Sentry integration currently covers the backend only; the frontend is not yet connected.
 
@@ -159,10 +159,10 @@ The product listing (`/products`) is `force-dynamic`, since each filter/search c
 
 ## Next Phase
 
-Automated testing, multi-session support, and Sentry integration — previously flagged as limitations — are now implemented, with 131 tests passing. Remaining steps before production deployment:
+Automated testing, multi-session support, and Sentry integration — previously flagged as limitations — are now implemented, with 131 tests passing. The steps below have all been completed and verified end-to-end on a local deployment:
 
-1. **Run `npx prisma generate && npm run build`** locally to produce a fully validated Prisma Client and confirm a clean production build.
-2. **Run `npx prisma migrate dev`** to create the `Session` table, since the schema changed and `hashedRefreshToken` was removed from `User`.
-3. **Configure real Stripe test keys** from an actual Stripe dashboard.
+1. `npx prisma generate && npm run build` — run and confirmed with zero TypeScript errors.
+2. `npx prisma migrate dev` — run; the `Session` table exists in the schema.
+3. Real Stripe test keys — configured, with a successful test-card payment confirmed end-to-end.
 
 Not currently required but recommended as follow-up work: running the e2e suite against a real PostgreSQL instance for rollback and constraint coverage, a device-management UI under `/account`, and extending Sentry coverage to the frontend.

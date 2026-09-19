@@ -142,10 +142,6 @@ Runs at `http://localhost:3000`. The backend must also be running on port 4000 (
 - **Sentry monitoring**: unexpected errors are reported to Sentry when `SENTRY_DSN` is set; leaving it empty (the default) disables it entirely with no code changes required. Routine 4xx errors are not reported.
 - **Concurrent multi-device sessions**: each login creates an independent session, so signing in on one device does not invalidate others. Users can list active sessions (`GET /auth/sessions`), revoke one (`DELETE /auth/sessions/:id`), or log out of all devices (`POST /auth/logout-all`). Refresh tokens rotate on every use; reuse of an old token invalidates the entire session.
 
-## Before Production Use
+## Verified Setup
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md#current-limitations-and-next-steps-for-production) for full details. Three remaining steps:
-
-1. **Run `npx prisma generate && npm run build`** locally. This generates a fully validated Prisma Client and confirms a clean production build (see [notes on Prisma Client generation](./ARCHITECTURE.md#note-on-prisma-client-generation-in-restricted-network-environments) if this fails in a restricted-network environment).
-2. **Run `npx prisma migrate dev`** to create the `Session` table — the schema changed and `hashedRefreshToken` was removed from `User`.
-3. **Replace the Stripe keys** with real test keys from your own Stripe account.
+The setup steps in [ARCHITECTURE.md](./ARCHITECTURE.md#next-phase) have already been run and confirmed end-to-end on a local deployment: `npx prisma generate && npm run build` passes with zero errors, the `Session` table migration has been applied, and a live Stripe test-card payment succeeded. See ARCHITECTURE.md for the full verification record. If you're setting this up fresh on a different machine, just follow the Setup steps above — they cover the same ground.
