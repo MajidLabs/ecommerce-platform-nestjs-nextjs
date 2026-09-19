@@ -13,6 +13,8 @@ A full-featured e-commerce reference implementation with a real, production-styl
 | Multi-session support | ✅ Dedicated `Session` table, refresh token rotation, per-device management |
 | Monitoring | ✅ Sentry (backend), disabled by default when `SENTRY_DSN` is unset |
 
+**Known limitations:** this is a production-style reference implementation, not yet hardened for commercial-scale deployment. See [ARCHITECTURE.md § Current Limitations and Next Steps for Production](./ARCHITECTURE.md#current-limitations-and-next-steps-for-production) for the full breakdown.
+
 ## Tech Stack — Backend
 
 - **NestJS 10** — server-side framework
