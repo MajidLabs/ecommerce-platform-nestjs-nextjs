@@ -57,6 +57,8 @@ npm run test:cov   # with coverage report
 
 Tests require no running database or server — the Prisma layer is mocked. Test coverage boundaries (transaction rollback, database constraints) are documented in [ARCHITECTURE.md](./ARCHITECTURE.md#testing).
 
+The full stack has also been manually verified end-to-end against real infrastructure (Postgres, Stripe test mode, Sentry) — see [`docs/VERIFICATION.md`](./docs/VERIFICATION.md).
+
 ## Seeded Accounts
 
 | Role | Email | Password |
