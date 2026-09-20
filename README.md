@@ -2,6 +2,9 @@
 
 A full-featured e-commerce reference implementation with a real, production-style backend. See [ARCHITECTURE.md](./ARCHITECTURE.md) for architecture and design decisions.
 
+
+![Homepage](docs/screenshots/ecom-home.png)
+
 ## Project Status
 
 | Component | Status |
