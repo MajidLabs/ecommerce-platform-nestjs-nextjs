@@ -149,3 +149,9 @@ Runs at `http://localhost:3000`. The backend must also be running on port 4000 (
 ## Verified Setup
 
 The setup steps in [ARCHITECTURE.md](./ARCHITECTURE.md#next-phase) have already been run and confirmed end-to-end on a local deployment: `npx prisma generate && npm run build` passes with zero errors, the `Session` table migration has been applied, and a live Stripe test-card payment succeeded. See ARCHITECTURE.md for the full verification record. If you're setting this up fresh on a different machine, just follow the Setup steps above — they cover the same ground.
+
+
+
+## License
+
+MIT - see [LICENSE](LICENSE).
