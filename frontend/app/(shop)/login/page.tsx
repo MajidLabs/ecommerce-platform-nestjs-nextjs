@@ -32,7 +32,12 @@ function LoginForm() {
       // committed the login response's Set-Cookie before the next page's
       // Header mounts and reads it — a client-side route transition can
       // render Header before the cookie is guaranteed visible.
-      window.location.href = searchParams.get('next') || '/';
+      const next = searchParams.get('next') || '/';
+      const safeNext =
+        next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\')
+          ? next
+          : '/';
+      window.location.href = safeNext;
     } finally {
       setLoading(false);
     }
