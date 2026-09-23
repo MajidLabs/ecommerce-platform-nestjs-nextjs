@@ -24,7 +24,7 @@ export async function serverFetch<T>(
   headers.set('Content-Type', 'application/json');
 
   if (auth) {
-    const token = getAccessToken();
+    const token = await getAccessToken();
     if (!token) return null;
     headers.set('Authorization', `Bearer ${token}`);
   }

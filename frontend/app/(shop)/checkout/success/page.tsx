@@ -2,21 +2,22 @@ import Link from 'next/link';
 import { CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 
-export default function CheckoutSuccessPage({
+export default async function CheckoutSuccessPage({
   searchParams,
 }: {
-  searchParams: { orderId?: string };
+  searchParams: Promise<{ orderId?: string }>;
 }) {
+  const { orderId } = await searchParams;
   return (
     <div className="mx-auto max-w-md py-20 text-center">
       <CheckCircle2 className="mx-auto h-12 w-12 text-signal" />
       <h1 className="mt-5 font-display text-2xl">Order placed</h1>
       <p className="mt-2 text-muted">
         Thanks — we&apos;ve received your order
-        {searchParams.orderId && (
+        {orderId && (
           <>
             {' '}
-            (<span className="font-mono text-sm">{searchParams.orderId.slice(0, 8)}</span>)
+            (<span className="font-mono text-sm">{orderId.slice(0, 8)}</span>)
           </>
         )}
         . A confirmation will show up in your order history shortly.

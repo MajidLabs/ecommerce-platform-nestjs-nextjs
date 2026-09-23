@@ -13,8 +13,9 @@ import type { Product } from '@/lib/types';
 // backend for every product slug at `next build` time.
 export const revalidate = 3600;
 
-export default async function ProductPage({ params }: { params: { slug: string } }) {
-  const product = await serverFetch<Product>(`/products/${params.slug}`);
+export default async function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const product = await serverFetch<Product>(`/products/${slug}`);
   if (!product) notFound();
 
   const available = isAvailable(product.inventory?.quantity, product.inventory?.reserved);

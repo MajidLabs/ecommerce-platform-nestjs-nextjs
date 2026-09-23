@@ -3,8 +3,9 @@ import { serverFetch } from '@/lib/server-api';
 import { ProductForm } from '@/components/admin/ProductForm';
 import type { Product } from '@/lib/types';
 
-export default async function EditProductPage({ params }: { params: { id: string } }) {
-  const product = await serverFetch<Product>(`/products/by-id/${params.id}`, {
+export default async function EditProductPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const product = await serverFetch<Product>(`/products/by-id/${id}`, {
     auth: true,
     revalidate: false,
   });

@@ -13,11 +13,12 @@ interface LowStockRow {
 export default async function AdminReportsPage({
   searchParams,
 }: {
-  searchParams: { startDate?: string; endDate?: string };
+  searchParams: Promise<{ startDate?: string; endDate?: string }>;
 }) {
+  const { startDate, endDate } = await searchParams;
   const summaryQuery = new URLSearchParams();
-  if (searchParams.startDate) summaryQuery.set('startDate', searchParams.startDate);
-  if (searchParams.endDate) summaryQuery.set('endDate', searchParams.endDate);
+  if (startDate) summaryQuery.set('startDate', startDate);
+  if (endDate) summaryQuery.set('endDate', endDate);
 
   const [summary, revenue, topProducts, lowStock] = await Promise.all([
     serverFetch<SalesSummary>(`/reports/summary?${summaryQuery.toString()}`, {
@@ -39,7 +40,7 @@ export default async function AdminReportsPage({
           <input
             type="date"
             name="startDate"
-            defaultValue={searchParams.startDate}
+            defaultValue={startDate}
             className="rounded border border-line px-3 py-2 text-sm"
           />
         </div>
@@ -48,7 +49,7 @@ export default async function AdminReportsPage({
           <input
             type="date"
             name="endDate"
-            defaultValue={searchParams.endDate}
+            defaultValue={endDate}
             className="rounded border border-line px-3 py-2 text-sm"
           />
         </div>

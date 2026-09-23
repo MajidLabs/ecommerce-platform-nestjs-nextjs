@@ -5,8 +5,9 @@ import { Badge } from '@/components/ui/Badge';
 import { OrderStatusControl } from '@/components/admin/OrderStatusControl';
 import type { Order } from '@/lib/types';
 
-export default async function AdminOrderDetailPage({ params }: { params: { id: string } }) {
-  const order = await serverFetch<Order>(`/orders/${params.id}`, { auth: true, revalidate: false });
+export default async function AdminOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const order = await serverFetch<Order>(`/orders/${id}`, { auth: true, revalidate: false });
   if (!order) notFound();
 
   return (

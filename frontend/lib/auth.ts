@@ -11,7 +11,8 @@ export interface SessionUser {
 // expired, or invalid — callers decide whether that means "redirect to
 // login" or "render as a guest".
 export async function getSession(): Promise<SessionUser | null> {
-  const token = cookies().get('accessToken')?.value;
+  const cookieStore = await cookies();
+  const token = cookieStore.get('accessToken')?.value;
   if (!token) return null;
 
   try {
@@ -27,6 +28,7 @@ export async function getSession(): Promise<SessionUser | null> {
   }
 }
 
-export function getAccessToken(): string | undefined {
-  return cookies().get('accessToken')?.value;
+export async function getAccessToken(): Promise<string | undefined> {
+  const cookieStore = await cookies();
+  return cookieStore.get('accessToken')?.value;
 }

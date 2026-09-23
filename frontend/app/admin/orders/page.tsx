@@ -27,9 +27,10 @@ const STATUS_TONE: Record<OrderStatus, 'neutral' | 'signal' | 'brick' | 'muted'>
 export default async function AdminOrdersPage({
   searchParams,
 }: {
-  searchParams: { status?: OrderStatus };
+  searchParams: Promise<{ status?: OrderStatus }>;
 }) {
-  const query = searchParams.status ? `?status=${searchParams.status}&limit=100` : '?limit=100';
+  const { status } = await searchParams;
+  const query = status ? `?status=${status}&limit=100` : '?limit=100';
   const data = await serverFetch<Paginated<Order>>(`/orders${query}`, {
     auth: true,
     revalidate: false,
@@ -44,7 +45,7 @@ export default async function AdminOrdersPage({
         <Link
           href="/admin/orders"
           className={`rounded-full border px-3 py-1 text-xs ${
-            !searchParams.status ? 'border-ink bg-ink text-paper' : 'border-line text-muted'
+            !status ? 'border-ink bg-ink text-paper' : 'border-line text-muted'
           }`}
         >
           All
@@ -54,7 +55,7 @@ export default async function AdminOrdersPage({
             key={s}
             href={`/admin/orders?status=${s}`}
             className={`rounded-full border px-3 py-1 text-xs ${
-              searchParams.status === s ? 'border-ink bg-ink text-paper' : 'border-line text-muted'
+              status === s ? 'border-ink bg-ink text-paper' : 'border-line text-muted'
             }`}
           >
             {s}

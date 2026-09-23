@@ -48,8 +48,9 @@ async function tryRefresh(
   return { accessToken: data.accessToken, refreshToken: data.refreshToken };
 }
 
-async function handler(req: NextRequest, { params }: { params: { path: string[] } }) {
-  const path = params.path.join('/');
+async function handler(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  const { path: pathSegments } = await params;
+  const path = pathSegments.join('/');
   const accessToken = req.cookies.get('accessToken')?.value;
 
   let backendRes: Response;

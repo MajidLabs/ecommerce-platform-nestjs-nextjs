@@ -9,15 +9,16 @@ import type { Category, Paginated, Product } from '@/lib/types';
 export const dynamic = 'force-dynamic';
 
 interface Props {
-  searchParams: {
+  searchParams: Promise<{
     search?: string;
     category?: string;
     sort?: string;
     page?: string;
-  };
+  }>;
 }
 
-export default async function ProductsPage({ searchParams }: Props) {
+export default async function ProductsPage({ searchParams: searchParamsPromise }: Props) {
+  const searchParams = await searchParamsPromise;
   const params = new URLSearchParams();
   if (searchParams.search) params.set('search', searchParams.search);
   if (searchParams.category) params.set('category', searchParams.category);
