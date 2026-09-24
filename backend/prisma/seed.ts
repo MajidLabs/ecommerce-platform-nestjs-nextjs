@@ -3,13 +3,21 @@ import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
+// Defaults match what README.md documents as the public demo login for
+// this portfolio deployment. Override via env vars for any other
+// deployment - these are seed-time only and never touch runtime code.
+const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL || 'admin@example.com';
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'Admin@12345';
+const CUSTOMER_EMAIL = process.env.SEED_CUSTOMER_EMAIL || 'customer@example.com';
+const CUSTOMER_PASSWORD = process.env.SEED_CUSTOMER_PASSWORD || 'Customer@12345';
+
 async function main() {
-  const adminPassword = await bcrypt.hash('Admin@12345', 10);
+  const adminPassword = await bcrypt.hash(ADMIN_PASSWORD, 10);
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@example.com' },
+    where: { email: ADMIN_EMAIL },
     update: {},
     create: {
-      email: 'admin@example.com',
+      email: ADMIN_EMAIL,
       passwordHash: adminPassword,
       firstName: 'Admin',
       lastName: 'User',
@@ -22,12 +30,12 @@ async function main() {
     create: { userId: admin.id },
   });
 
-  const customerPassword = await bcrypt.hash('Customer@12345', 10);
+  const customerPassword = await bcrypt.hash(CUSTOMER_PASSWORD, 10);
   const customer = await prisma.user.upsert({
-    where: { email: 'customer@example.com' },
+    where: { email: CUSTOMER_EMAIL },
     update: {},
     create: {
-      email: 'customer@example.com',
+      email: CUSTOMER_EMAIL,
       passwordHash: customerPassword,
       firstName: 'Test',
       lastName: 'Customer',
@@ -128,8 +136,8 @@ async function main() {
   });
 
   console.log('Seed completed.');
-  console.log('Admin login:    admin@example.com / Admin@12345');
-  console.log('Customer login: customer@example.com / Customer@12345');
+  console.log(`Admin login:    ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
+  console.log(`Customer login: ${CUSTOMER_EMAIL} / ${CUSTOMER_PASSWORD}`);
 }
 
 main()
