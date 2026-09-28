@@ -4,7 +4,7 @@ A full-featured e-commerce reference implementation with a real, production-styl
 
 ## Live Demo
 
-Deployed and fully tested end-to-end at **https://web.cloudnoob.shop** — registration, checkout, and Stripe payments have all been verified working in production (Stripe test mode — use card `4242 4242 4242 4242`, any future expiry, any CVC).
+Deployed and end-to-end tested on a VPS: registration, checkout, and Stripe payments were verified working in production (Stripe test mode). The demo instance was hosted temporarily at https://web.cloudnoob.shop (a time-limited server) and may no longer be online. See docs/VERIFICATION.md for the verification record and the screenshot below.
 
 ![Homepage](docs/screenshots/ecom-home.png)
 
