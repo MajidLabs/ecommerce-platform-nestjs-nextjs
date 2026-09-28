@@ -1,13 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -31,8 +29,7 @@ export default function RegisterPage() {
         setError(data.message || 'Could not create account');
         return;
       }
-      router.push('/');
-      router.refresh();
+      window.location.href = '/';
     } finally {
       setLoading(false);
     }
