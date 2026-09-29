@@ -63,6 +63,8 @@ A key design point is the **inventory reservation pattern**: when an order is cr
 available = quantity - reserved
 ```
 
+Note: `OrdersService.updateStatus` does not enforce the diagram above — any status can be set to any other, and cancelling releases reserved stock regardless of the order's current state. See [Known Issues](#known-issues).
+
 ## Coupon Validation
 
 Coupon validation logic is intentionally duplicated: once independently in `CouponsService.validate()` (a public endpoint for computing a discount without creating an order), and once inside `OrdersService.createFromCart()` at order-creation time. Order creation must validate independently and atomically rather than trusting a prior call, since a coupon could expire or reach its usage limit between the two. The check order is deliberate — active → not expired → usage limit → minimum order amount — followed by the discount calculation, which respects `maxDiscountAmount` to prevent disproportionate discounts on large orders when a percentage-based coupon is applied.
@@ -84,7 +86,9 @@ Three roles: `CUSTOMER` (default), `STAFF`, `ADMIN`. A simple enum is used rathe
 
 ## Testing
 
-`npm run test` (unit) and `npm run test:e2e` (e2e). Current status: **101 unit tests + 30 e2e tests, all passing.**
+`npm run test` (unit) and `npm run test:e2e` (e2e). Current status: **101 unit tests + 30 e2e tests, all passing.** These are backend tests only; the frontend has no automated tests (it is covered by `tsc`, `next build`, `next lint` in CI and the manual record in `docs/VERIFICATION.md`).
+
+CI (`.github/workflows/ci.yml`, on every push/PR to `main`): the backend job starts a Postgres 16 service, runs `prisma generate`, `prisma migrate deploy` (a migration smoke check against a real database), the unit and e2e suites (both still with Prisma mocked) and `npm run build`; the frontend job runs `npm ci`, lint and `next build`.
 
 ### Unit Tests — business logic with Prisma mocked
 
@@ -122,7 +126,7 @@ The items below were originally scoped out to keep initial development focused, 
 - ~~Rate limiting was global only~~ — **Resolved**: `login` and `register` now have a dedicated, stricter limit (5 requests/minute per IP), in addition to the overall 100/minute cap.
 - ~~Only one refresh token stored at a time~~ — **Resolved**: each login now creates an independent `Session` row; see the Authentication section above.
 - ~~Stripe keys were placeholders~~ — **Resolved**: real Stripe test keys were configured for the reference deployment, with a live test-card payment confirmed end-to-end (see Next Phase below). `.env.example` in this repo intentionally still ships with placeholder values, since Stripe keys are account-specific — anyone deploying this needs to generate their own test keys from their own Stripe dashboard.
-- ~~Product image handling was limited to an array of URLs~~ — **Resolved**: real file uploads via `POST /uploads/product-image` (file-type and 5 MB validation), with an upload UI in the admin product form.
+- ~~Product image handling was limited to an array of URLs~~ — **Resolved**: real file uploads via `POST /uploads/product-image` (file-type and 5 MB validation), stored on local disk under `backend/uploads/products/`, with an upload UI in the admin product form.
 - ~~No structured logging or monitoring integration~~ — **Resolved**: every request is logged as a structured JSON line and reported to Sentry via `@sentry/nestjs`. Only unexpected errors (5xx) are reported; 4xx responses that are part of normal flow are not. Monitoring is fully disabled when `SENTRY_DSN` is unset, with no effect on local development. Note: Sentry integration currently covers the backend only; the frontend is not yet connected.
 
 ### Note on Prisma Client Generation in Restricted-Network Environments
@@ -151,11 +155,29 @@ The product listing (`/products`) is `force-dynamic`, since each filter/search c
 
 ### Bugs Found During Development
 
+- **Register/login redirect raced the auth cookie**: after a successful sign-in or registration the page used a client-side route transition, so the next page's Header could render before the browser had committed the `Set-Cookie` and briefly show a logged-out state. Resolved by using a full page navigation (`window.location.href`) in both `login/page.tsx` and `register/page.tsx`.
+- **`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is fixed at build time**: it is read by `lib/stripe.ts` but Next.js inlines `NEXT_PUBLIC_*` values during `next build`, so on the VPS changing the key required a rebuild and process restart, not just a restart. Documented in the README's Frontend Setup.
 - **Disallowed export from a route handler**: a helper function, `setAuthCookies`, was initially defined and exported directly from `route.ts`. Next.js only permits exporting HTTP-method functions (`GET`, `POST`, etc.) from route files, and `next build` failed with an explicit error. Resolved by moving the helper to `lib/cookies.ts`.
 - **Raw HTML error instead of clean JSON**: when the backend was unreachable, the proxy route's `fetch()` call rejected without a try/catch, and Next.js returned a raw HTML error page. On the client, `res.json()` then failed on that HTML, producing a second, confusing error. Identified via a direct curl test against a stopped backend rather than code review. Resolved by wrapping the fetch in try/catch and returning a `502` with a clean JSON body.
 - **`refreshToken` cookie not updated after a silent refresh**: `auth.refresh()` always issues a new refresh token via rotation, but the proxy route only updated the `accessToken` cookie after a silent refresh, leaving `refreshToken` stale. The stale cookie no longer matched the newly stored hash on the `Session` row, causing the second silent refresh to always fail and forcing re-authentication. This latent bug predated the current session model but surfaced while implementing the `Session` table, since that change touched the same code path. Resolved by having `tryRefresh` return both tokens and updating both cookies.
 - **`payments.controller.ts` failed to compile**: `req.rawBody` in NestJS is typed as `Buffer | undefined`, since it is only populated when a request body is present, but `handleWebhook` expected a `Buffer` parameter — a compile error under `strictNullChecks: true` that would break `npm run build`. Caught during a full `tsc --noEmit` pass across the backend. Resolved with an explicit check that returns a clean `400` for a missing body instead of passing `undefined` to the Stripe SDK.
 - **All 4xx responses logged at ERROR level with a full stack trace**: a 403 or 401 indicates correct API behavior, not a defect, and this logging pattern buried genuine 5xx errors in noise — undermining the newly added Sentry integration. Identified while running the e2e tests, whose output was full of stack traces for responses that were *expected* to be 403. Resolved so that 5xx remains at error level with a stack trace, while 4xx logs a single warn-level line.
+
+## Known Issues
+
+Found by reading the code against this document; none are fixed yet.
+
+- **Client IP is not forwarded, so rate limits are shared.** The browser talks only to Next.js; the Next.js server calls the backend (`/api/proxy/*`, `/api/auth/login`, `/api/auth/register`) without `X-Forwarded-For`, and the backend does not set `trust proxy`. Every request therefore reaches NestJS from the frontend server's address. Consequences: the per-IP throttler buckets (5/min on `login` and `register`, 100/min globally) are shared by all users of the site, and `Session.ipAddress` / `userAgent` (shown by `GET /auth/sessions`) record the frontend server, not the user's device. Fix: forward `X-Forwarded-For` and `User-Agent` from the Next.js routes and enable `trust proxy` in the backend.
+- **Cancelling a paid order corrupts inventory.** `updateStatus(CANCELLED)` always does `reserved -= quantity`. For an order that is already `PAID` (or later), `markOrderPaid` has already decremented both `quantity` and `reserved`, so cancelling decrements `reserved` a second time (it can go negative and free stock reserved by other pending orders) and never returns `quantity`. `REFUNDED` does not restore stock at all.
+- **No status-transition validation.** `PATCH /orders/:id` accepts any `OrderStatus` from any current status (for example `DELIVERED` → `PENDING`).
+- **Image optimizer allows any HTTPS host.** `frontend/next.config.mjs` sets `remotePatterns` to `hostname: '**'`; restrict it to the hosts you actually serve images from.
+- **Seed has no production guard.** `prisma/seed.ts` falls back to the public `admin@example.com / Admin@12345` and `customer@example.com / Customer@12345` unless the `SEED_*` variables are set.
+- **Uploads live on local disk.** Files go to `backend/uploads/products/` and are served by the backend; they are not shared between instances and are not backed up.
+- **Stale comment in `backend/.env.example`** refers to a "Docker seed step"; `docker-compose.yml` only runs Postgres and has no seed step.
+
+## Deployment Record
+
+The project was deployed to a VPS and tested end-to-end there in Stripe test mode (registration, checkout, payment); the demo instance was temporary and may be offline (see README). Requirements that mattered in that deployment: HTTPS (auth cookies are `Secure` in production builds), `JWT_ACCESS_SECRET` identical in backend and frontend, `prisma migrate deploy` for the schema, and rebuilding the frontend whenever a `NEXT_PUBLIC_*` value changes.
 
 ## Next Phase
 

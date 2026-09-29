@@ -15,11 +15,12 @@ Deployed and end-to-end tested on a VPS: registration, checkout, and Stripe paym
 | Backend (NestJS + PostgreSQL) | ✅ Complete. `tsc --noEmit` passes with zero errors. 101 unit tests + 30 e2e tests, all passing |
 | Frontend (Next.js) | ✅ Complete. `tsc` and `next build` pass with zero errors; graceful-degradation behavior verified against a stopped backend |
 | Admin Panel | ✅ Complete, part of the frontend (`/admin/*`) |
-| Automated tests | ✅ 131 tests. Details in [ARCHITECTURE.md](./ARCHITECTURE.md#testing) |
+| Automated tests | ✅ 131 backend tests (101 unit + 30 e2e), Prisma mocked. No automated frontend tests. Details in [ARCHITECTURE.md](./ARCHITECTURE.md#testing) |
+| CI | ✅ GitHub Actions (`.github/workflows/ci.yml`) on every push/PR: backend (Postgres service, `prisma migrate deploy`, unit + e2e, build) and frontend (lint, build) |
 | Multi-session support | ✅ Dedicated `Session` table, refresh token rotation, per-device management |
 | Monitoring | ✅ Sentry (backend), disabled by default when `SENTRY_DSN` is unset |
 
-**Known limitations:** this is a production-style reference implementation, not yet hardened for commercial-scale deployment. See [ARCHITECTURE.md § Current Limitations and Next Steps for Production](./ARCHITECTURE.md#current-limitations-and-next-steps-for-production) for the full breakdown.
+**Known limitations:** this is a production-style reference implementation, not yet hardened for commercial-scale deployment. A code review found a few concrete issues (rate limiting behind the Next.js proxy, order cancellation after payment, unvalidated status transitions) — listed under "Known Issues" in [ARCHITECTURE.md](./ARCHITECTURE.md#known-issues). See [ARCHITECTURE.md § Current Limitations and Next Steps for Production](./ARCHITECTURE.md#current-limitations-and-next-steps-for-production) for the full breakdown.
 
 ## Tech Stack — Backend
 
@@ -53,6 +54,8 @@ npm run seed
 npm run start:dev
 ```
 
+On a server (no schema changes, just applying the committed migrations) use `npx prisma migrate deploy` (`npm run prisma:deploy`) instead of `migrate dev`, then `npm run build` and `npm run start:prod`.
+
 The API runs at `http://localhost:4000/api/v1`. Swagger docs are available at `http://localhost:4000/api/docs`.
 
 ### Running Tests
@@ -63,7 +66,7 @@ npm run test:e2e   # 30 e2e tests
 npm run test:cov   # with coverage report
 ```
 
-Tests require no running database or server — the Prisma layer is mocked. Test coverage boundaries (transaction rollback, database constraints) are documented in [ARCHITECTURE.md](./ARCHITECTURE.md#testing).
+Tests require no running database or server — the Prisma layer is mocked (CI runs them the same way; its Postgres service is only used for a `prisma migrate deploy` smoke check). There are no automated frontend tests. Test coverage boundaries (transaction rollback, database constraints) are documented in [ARCHITECTURE.md](./ARCHITECTURE.md#testing).
 
 The full stack has also been manually verified end-to-end against real infrastructure (Postgres, Stripe test mode, Sentry) — see [`docs/VERIFICATION.md`](./docs/VERIFICATION.md).
 
@@ -75,6 +78,8 @@ The full stack has also been manually verified end-to-end against real infrastru
 | Customer | customer@example.com | Customer@12345 |
 
 Sample coupon code: `WELCOME10` (10% off, $50 minimum order)
+
+These credentials are public. Before seeding any server that isn't your own machine, set `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_CUSTOMER_EMAIL` and `SEED_CUSTOMER_PASSWORD` in `backend/.env` (see `backend/.env.example`). The seed script has no production guard: without these variables it always creates the accounts above.
 
 ## Testing Payment Webhooks (Stripe)
 
@@ -102,6 +107,7 @@ backend/
     ├── coupons/
     ├── payments/              # Stripe PaymentIntent + webhook handling
     ├── reports/                 # sales reports for the admin panel
+    ├── uploads/                  # product image upload (multer, local disk)
     ├── common/                   # guards, decorators, exception filters
     └── prisma/                    # PrismaService
 ```
@@ -112,7 +118,10 @@ backend/
 |---|---|
 | `npm run start:dev` | run in watch mode |
 | `npm run build` | production build |
-| `npm run prisma:migrate` | create a new migration |
+| `npm run prisma:generate` | generate the Prisma client |
+| `npm run prisma:migrate` | create/apply a migration in development (`prisma migrate dev`) |
+| `npm run prisma:deploy` | apply committed migrations on a server (`prisma migrate deploy`) |
+| `npm run start:prod` | run the compiled build (`node dist/main`) |
 | `npm run seed` | seed the database with sample data |
 | `npm run test` | unit tests |
 | `npm run test:e2e` | end-to-end tests |
@@ -120,7 +129,7 @@ backend/
 
 ## Tech Stack — Frontend
 
-- **Next.js 14 (App Router)** — SSR for auth-gated pages, ISR for product pages, `force-dynamic` for the filtered product listing
+- **Next.js 15 (App Router)** — SSR for auth-gated pages, ISR for product pages, `force-dynamic` for the filtered product listing
 - **Zustand** — used only for the cart badge counter; all other state is server-driven
 - **jose** — JWT signature verification in middleware (Edge runtime) and Server Components
 - **Stripe Elements** — payment form
@@ -138,6 +147,8 @@ npm run dev
 
 Runs at `http://localhost:3000`. The backend must also be running on port 4000 (see above) for full functionality.
 
+Environment variables (`frontend/.env.local.example`): `BACKEND_URL`, `NEXT_PUBLIC_BACKEND_URL`, `JWT_ACCESS_SECRET` (must equal the backend's) and `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`. Every `NEXT_PUBLIC_*` value is embedded into the bundle at **build time**: after changing it you must run `npm run build` again and restart the process (e.g. `pm2 restart`); restarting alone keeps the old value. Auth cookies get the `Secure` flag when `NODE_ENV=production`, so a production build must be served over HTTPS or browsers will drop the cookies.
+
 ### Frontend Auth Architecture
 
 `accessToken` and `refreshToken` are stored as `httpOnly` cookies, inaccessible to browser-side JavaScript — a mitigation against XSS-based token theft. Client-side code never calls the backend directly; all requests are routed through `/api/proxy/*`, which reads the cookie, attaches the `Authorization` header server-side, and performs a silent refresh when the access token has expired.
@@ -154,7 +165,7 @@ Runs at `http://localhost:3000`. The backend must also be running on port 4000 (
 
 ## Verified Setup
 
-The setup steps in [ARCHITECTURE.md](./ARCHITECTURE.md#next-phase) have already been run and confirmed end-to-end on a local deployment: `npx prisma generate && npm run build` passes with zero errors, the `Session` table migration has been applied, and a live Stripe test-card payment succeeded. See ARCHITECTURE.md for the full verification record. If you're setting this up fresh on a different machine, just follow the Setup steps above — they cover the same ground.
+The setup steps in [ARCHITECTURE.md](./ARCHITECTURE.md#next-phase) have already been run and confirmed end-to-end on a local deployment: `npx prisma generate && npm run build` passes with zero errors, the `Session` table migration has been applied, and a live Stripe test-card payment succeeded. The project was also deployed to a VPS and tested there (see [Live Demo](#live-demo)). See ARCHITECTURE.md for the full verification record. If you're setting this up fresh on a different machine, just follow the Setup steps above — they cover the same ground.
 
 ## License
 
